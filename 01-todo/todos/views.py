@@ -3,6 +3,7 @@
 try:
     from django.shortcuts import render, redirect, get_object_or_404
 except ImportError:  # pragma: no cover - provide stubs when Django is not available
+
     def render(_request, _template_name, context=None):
         """Stub render used when Django is not available; returns None."""
         del _request, _template_name, context
@@ -15,6 +16,7 @@ except ImportError:  # pragma: no cover - provide stubs when Django is not avail
 
     class _DoesNotExist(Exception):
         """Internal exception used by the stub get_object_or_404."""
+
         pass
 
     def get_object_or_404(_model, *args, **kwargs):
@@ -22,13 +24,25 @@ except ImportError:  # pragma: no cover - provide stubs when Django is not avail
         del _model, args, kwargs
         raise _DoesNotExist
 
+
 from .models import Todo
 
 
 def home(request):
-    """Render the home page with all todos ordered by due date."""
     todos = Todo.objects.all().order_by("due_date")
-    return render(request, "home.html", {"todos": todos})
+
+    # Calculate stats for the dashboard
+    total = todos.count()
+    completed = todos.filter(is_resolved=True).count()
+    pending = total - completed
+
+    context = {
+        "todos": todos,
+        "total": total,
+        "completed": completed,
+        "pending": pending,
+    }
+    return render(request, "home.html", context)
 
 
 def add_todo(request):
