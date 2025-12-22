@@ -1,8 +1,11 @@
 """FastMCP server with tools for arithmetic, web content extraction, and doc search."""
 
 import io
+import ipaddress
+import socket
 import zipfile
-from typing import List
+from typing import List, Set
+from urllib.parse import urlparse
 
 import minsearch
 import requests
@@ -11,6 +14,10 @@ from requests.exceptions import RequestException, Timeout
 
 # Constants
 DOCS_URL = "https://github.com/jlowin/fastmcp/archive/refs/heads/main.zip"
+
+# Configurable allowlist for safe domains (empty by default)
+ALLOWED_DOMAINS: Set[str] = set()
+# Example: ALLOWED_DOMAINS = {"example.com", "trusted-site.org"}
 
 # Initialize FastMCP
 mcp = FastMCP("Demo 🚀")
@@ -59,6 +66,129 @@ def initialize_search_index() -> None:
 
     except Exception as e:
         print(f"❌ Failed to initialize search index: {str(e)}")
+        raise
+
+
+def is_safe_url(url: str) -> tuple[bool, str]:
+    """
+    Validate URL to prevent SSRF attacks by blocking requests to internal/private addresses.
+
+    Args:
+        url: The URL to validate
+
+    Returns:
+        Tuple of (is_safe: bool, error_message: str)
+        If safe, error_message is empty. If unsafe, contains reason for rejection.
+    """
+    try:
+        # Parse the URL
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+
+        if not hostname:
+            return False, "Error: Unable to extract hostname from URL"
+
+        # Check if domain is in allowlist
+        if ALLOWED_DOMAINS and hostname in ALLOWED_DOMAINS:
+            return True, ""
+
+        # Block localhost variations
+        localhost_names = {"localhost", "localhost.localdomain"}
+        if hostname.lower() in localhost_names:
+            return False, "Error: Access to localhost is not permitted"
+
+        try:
+            # Resolve hostname to IP addresses
+            addr_info = socket.getaddrinfo(hostname, None)
+            ip_addresses = {info[4][0] for info in addr_info}
+        except socket.gaierror:
+            return False, f"Error: Unable to resolve hostname '{hostname}'"
+
+        # Check each resolved IP address
+        for ip_str in ip_addresses:
+            try:
+                ip = ipaddress.ip_address(ip_str)
+
+                # Check for various unsafe IP ranges
+                if ip.is_loopback:
+                    return False, f"Error: Loopback address ({ip_str}) is not permitted"
+
+                if ip.is_private:
+                    return False, f"Error: Private address ({ip_str}) is not permitted"
+
+                if ip.is_link_local:
+                    return (
+                        False,
+                        f"Error: Link-local address ({ip_str}) is not permitted",
+                    )
+
+                if ip.is_multicast:
+                    return (
+                        False,
+                        f"Error: Multicast address ({ip_str}) is not permitted",
+                    )
+
+                if ip.is_unspecified:
+                    return (
+                        False,
+                        f"Error: Unspecified address ({ip_str}) is not permitted",
+                    )
+
+                if ip.is_reserved:
+                    return False, f"Error: Reserved address ({ip_str}) is not permitted"
+
+                # Explicit check for cloud metadata endpoint
+                if ip_str == "169.254.169.254":
+                    return (
+                        False,
+                        "Error: Access to cloud metadata endpoint (169.254.169.254) is not permitted",
+                    )
+
+                # Additional IPv4 checks for specific dangerous ranges
+                if isinstance(ip, ipaddress.IPv4Address):
+                    # RFC1918 private ranges (redundant with is_private but explicit)
+                    private_ranges = [
+                        ipaddress.ip_network("10.0.0.0/8"),
+                        ipaddress.ip_network("172.16.0.0/12"),
+                        ipaddress.ip_network("192.168.0.0/16"),
+                    ]
+                    for private_range in private_ranges:
+                        if ip in private_range:
+                            return (
+                                False,
+                                f"Error: Private network address ({ip_str}) is not permitted",
+                            )
+
+                    # 127.0.0.0/8 localhost range
+                    if ip in ipaddress.ip_network("127.0.0.0/8"):
+                        return (
+                            False,
+                            f"Error: Localhost address ({ip_str}) is not permitted",
+                        )
+
+                    # 169.254.0.0/16 link-local range
+                    if ip in ipaddress.ip_network("169.254.0.0/16"):
+                        return (
+                            False,
+                            f"Error: Link-local address ({ip_str}) is not permitted",
+                        )
+
+                # IPv6 local addresses
+                if isinstance(ip, ipaddress.IPv6Address):
+                    if ip.is_site_local:
+                        return (
+                            False,
+                            f"Error: Site-local IPv6 address ({ip_str}) is not permitted",
+                        )
+
+            except ValueError:
+                return False, f"Error: Invalid IP address format: {ip_str}"
+
+        # All checks passed
+        return True, ""
+
+    except Exception as e:
+        return False, f"Error: URL validation failed: {str(e)}"
 
 
 @mcp.tool
@@ -91,6 +221,11 @@ def get_page_content(url: str, timeout: int = 30) -> str:
     # Validate URL format
     if not url.startswith(("http://", "https://")):
         return "Error: Invalid URL format. Must start with http:// or https://"
+
+    # SSRF protection: validate URL before making any requests
+    is_safe, error_msg = is_safe_url(url)
+    if not is_safe:
+        return error_msg
 
     # Jina Reader URL prefix
     jina_url = f"https://r.jina.ai/{url}"
