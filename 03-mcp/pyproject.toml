@@ -1,0 +1,25 @@
+[project]
+name = "03-mcp"
+version = "0.1.0"
+description = "Model Context Protocol server with semantic search capabilities"
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+    {name = "Babatunde Abubakar", email = "tunde.bouba@gmail.com"}
+]
+license = {text = "MIT"}
+keywords = ["mcp", "model-context-protocol", "semantic-search"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "fastmcp>=2.14.1",
+    "minsearch>=0.0.7",
+    "requests>=2.32.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/03-mcp"
+Repository = "https://github.com/yourusername/03-mcp.git"
